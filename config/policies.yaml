@@ -1,0 +1,67 @@
+# AI Security Gateway Policy Rules
+# Ordered precedence: rules evaluate top to bottom
+rules:
+  # Inbound Rules
+  - name: block-prompt-injection
+    on: inbound
+    match: injection_heuristic
+    min_confidence: 0.70
+    action: block
+    dry_run: false
+    message: "Prompt rejected: security policy detected prompt injection or jailbreak attempt."
+
+  - name: block-inbound-secrets
+    on: inbound
+    match: secret_detected
+    action: block
+    dry_run: false
+    message: "Prompt rejected: secrets or credentials detected in request."
+
+  - name: redact-inbound-pii
+    on: inbound
+    match: pii_detected
+    action: redact
+    dry_run: false
+
+  # Outbound Rules
+  - name: block-canary-system-prompt-leak
+    on: outbound
+    match: system_prompt_leak
+    action: block
+    dry_run: false
+    message: "Model response blocked: system prompt leakage detected."
+
+  - name: redact-outbound-secrets
+    on: outbound
+    match: secret_detected
+    action: redact
+    dry_run: false
+
+  # Tool Call Rules
+  - name: tool-call-db-delete
+    on: tool_call
+    match:
+      tool: delete_record
+    action: require_approval
+    dry_run: false
+
+  - name: tool-call-financial-transfer
+    on: tool_call
+    match:
+      tool: transfer_funds
+    action: require_approval
+    dry_run: false
+
+  - name: tool-call-send-email
+    on: tool_call
+    match:
+      tool: send_email
+    action: require_approval
+    dry_run: false
+
+  - name: tool-call-execute-bash
+    on: tool_call
+    match:
+      tool: execute_bash
+    action: require_approval
+    dry_run: false

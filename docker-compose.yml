@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  gateway:
+    build: .
+    container_name: ai-security-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - GATEWAY_HOST=0.0.0.0
+      - GATEWAY_PORT=8000
+      - GATEWAY_DEBUG=false
+      - SQLITE_DB_PATH=/data/security_gateway.db
+      - POLICY_FILE_PATH=config/policies.yaml
+      - TOOLS_FILE_PATH=config/tools.yaml
+      # Set your upstream provider keys here or in .env
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ENABLE_MOCK_UPSTREAM=${ENABLE_MOCK_UPSTREAM:-false}
+    volumes:
+      - gateway_data:/data
+      - ./config:/app/config
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  gateway_data:

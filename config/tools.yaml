@@ -1,0 +1,102 @@
+tools:
+  - name: get_weather
+    description: Get current weather for a given location
+    risk_level: low
+    requires_approval: false
+    json_schema:
+      type: object
+      properties:
+        location:
+          type: string
+        units:
+          type: string
+          enum: [celsius, fahrenheit]
+      required: [location]
+
+  - name: search_docs
+    description: Search internal knowledge base
+    risk_level: low
+    requires_approval: false
+    json_schema:
+      type: object
+      properties:
+        query:
+          type: string
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+      required: [query]
+
+  - name: update_profile
+    description: Update user profile settings
+    risk_level: medium
+    requires_approval: false
+    json_schema:
+      type: object
+      properties:
+        user_id:
+          type: string
+        display_name:
+          type: string
+      required: [user_id]
+
+  - name: delete_record
+    description: Delete a record from the database
+    risk_level: high
+    requires_approval: true
+    json_schema:
+      type: object
+      properties:
+        table_name:
+          type: string
+        record_id:
+          type: string
+        cascade:
+          type: boolean
+      required: [table_name, record_id]
+
+  - name: transfer_funds
+    description: Transfer funds between accounts
+    risk_level: high
+    requires_approval: true
+    json_schema:
+      type: object
+      properties:
+        from_account:
+          type: string
+        to_account:
+          type: string
+        amount:
+          type: number
+          minimum: 0.01
+        currency:
+          type: string
+          enum: [USD, EUR, GBP]
+      required: [from_account, to_account, amount]
+
+  - name: send_email
+    description: Send email to an external recipient
+    risk_level: high
+    requires_approval: true
+    json_schema:
+      type: object
+      properties:
+        to:
+          type: string
+        subject:
+          type: string
+        body:
+          type: string
+      required: [to, subject, body]
+
+  - name: execute_bash
+    description: Execute shell command
+    risk_level: high
+    requires_approval: true
+    json_schema:
+      type: object
+      properties:
+        command:
+          type: string
+      required: [command]
