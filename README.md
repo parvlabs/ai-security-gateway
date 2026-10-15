@@ -1,6 +1,10 @@
 # 🛡️ AI Security Gateway (AI-WAF)
 
 <p align="center">
+  <img src="assets/hero_banner.jpg" alt="AI Security Gateway Architecture & Defense Shield" width="100%" />
+</p>
+
+<p align="center">
   <strong>An enterprise-grade, sub-25ms reverse proxy WAF sitting between client applications/agents and LLM providers (OpenAI, Anthropic, Ollama, etc.)</strong>
 </p>
 
