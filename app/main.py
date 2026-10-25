@@ -1,6 +1,6 @@
 import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
@@ -9,6 +9,9 @@ from app.proxy.openai_proxy import router as openai_router
 from app.proxy.anthropic_proxy import router as anthropic_router
 from app.security.policy_engine import policy_engine
 from app.security.tool_firewall import tool_firewall
+from app.security.compliance import compliance_service
+from app.proxy.semantic_cache import semantic_cache
+from app.proxy.fallback_router import fallback_router
 from app.dashboard.html_ui import DASHBOARD_HTML
 
 @asynccontextmanager
@@ -65,28 +68,52 @@ async def get_stats():
     from app.proxy.cache import gateway_cache
     stats_data = await db.get_stats()
     stats_data.update(gateway_cache.stats())
+    stats_data["semantic_cache"] = semantic_cache.stats()
+    stats_data["fallback_router"] = fallback_router.stats()
     return stats_data
+
+@app.get("/api/stats/semantic-cache", tags=["Telemetry"])
+async def get_semantic_cache_stats():
+    return semantic_cache.stats()
+
+@app.get("/api/stats/fallback-router", tags=["Telemetry"])
+async def get_fallback_router_stats():
+    return fallback_router.stats()
 
 # Gateway Audit Log Feed
 @app.get("/api/audit-logs", tags=["Telemetry"])
 async def get_audit_logs(limit: int = 50):
     return await db.get_recent_audit_logs(limit=limit)
 
-# Tool Approvals Management
+# Compliance Audit Export (SOC 2, HIPAA, GDPR, PCI-DSS)
+@app.get("/api/compliance/export", tags=["Compliance"])
+async def export_compliance_audit(format: str = Query("csv", pattern="^(csv|json)$"), limit: int = 1000):
+    if format == "csv":
+        csv_content = await compliance_service.export_csv(limit=limit)
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=compliance_audit_trail.csv"}
+        )
+    else:
+        json_content = await compliance_service.export_json(limit=limit)
+        return JSONResponse(content=json_content)
+
+# Tool Approvals Management (Supports POST and browser/webhook GET)
 @app.get("/api/approvals", tags=["Tool Firewall"])
 async def get_pending_approvals():
     return await db.get_pending_approvals()
 
-@app.post("/api/approvals/{approval_id}/approve", tags=["Tool Firewall"])
-@app.post("/api/approvals/{approval_id}/approved", tags=["Tool Firewall"])
+@app.api_route("/api/approvals/{approval_id}/approve", methods=["GET", "POST"], tags=["Tool Firewall"])
+@app.api_route("/api/approvals/{approval_id}/approved", methods=["GET", "POST"], tags=["Tool Firewall"])
 async def approve_tool(approval_id: str):
     success = await db.resolve_tool_approval(approval_id, "approved")
     if not success:
         raise HTTPException(status_code=404, detail="Approval request not found or already resolved.")
     return {"status": "approved", "approval_id": approval_id}
 
-@app.post("/api/approvals/{approval_id}/reject", tags=["Tool Firewall"])
-@app.post("/api/approvals/{approval_id}/rejected", tags=["Tool Firewall"])
+@app.api_route("/api/approvals/{approval_id}/reject", methods=["GET", "POST"], tags=["Tool Firewall"])
+@app.api_route("/api/approvals/{approval_id}/rejected", methods=["GET", "POST"], tags=["Tool Firewall"])
 async def reject_tool(approval_id: str):
     success = await db.resolve_tool_approval(approval_id, "rejected")
     if not success:

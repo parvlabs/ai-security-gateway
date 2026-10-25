@@ -95,4 +95,23 @@ class OutboundScanner:
             canary_leaked=canary_leaked
         )
 
+    def check_midstream_leak(self, text: str) -> Tuple[bool, str]:
+        """
+        Sub-millisecond sliding window check for streaming responses (Token Killer).
+        Returns: (has_leak: bool, reason: str)
+        """
+        if not text:
+            return False, ""
+        # Check static canaries
+        for canary in self.canary_tokens:
+            if canary in text:
+                return True, f"Canary token '{canary}' detected mid-stream"
+        # Check dynamic canary pattern (rb_canary_)
+        if "rb_canary_" in text:
+            return True, "Dynamic canary token prefix detected mid-stream"
+        # Check high-severity secret patterns
+        if "sk-proj-" in text or "sk-ant-" in text or "ghp_" in text or "AKIA" in text:
+            return True, "API Key / Cloud Secret detected mid-stream"
+        return False, ""
+
 outbound_scanner = OutboundScanner()

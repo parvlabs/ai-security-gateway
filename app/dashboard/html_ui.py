@@ -449,9 +449,17 @@ DASHBOARD_HTML = """
                 <div class="logo-subtitle">Real-time LLM Inspection & Reverse Proxy Core</div>
             </div>
         </div>
-        <div class="status-pill">
-            <div class="status-dot"></div>
-            <span>GATEWAY ACTIVE &bull; DROP-IN READY</span>
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <a href="/api/compliance/export?format=csv" download="compliance_audit_trail.csv" class="btn-preset" style="color:var(--text-main); border-color:var(--accent-blue); text-decoration:none; padding:6px 12px; font-weight:600; display:flex; align-items:center; gap:6px;">
+                <span>📥 Export SOC2/HIPAA (CSV)</span>
+            </a>
+            <a href="/api/compliance/export?format=json" download="compliance_audit_trail.json" class="btn-preset" style="color:var(--text-main); border-color:var(--accent-purple); text-decoration:none; padding:6px 12px; font-weight:600; display:flex; align-items:center; gap:6px;">
+                <span>📋 Export JSON</span>
+            </a>
+            <div class="status-pill">
+                <div class="status-dot"></div>
+                <span>GATEWAY ACTIVE &bull; DROP-IN READY</span>
+            </div>
         </div>
     </header>
 
@@ -481,6 +489,14 @@ DASHBOARD_HTML = """
             <div class="metric-card">
                 <div class="metric-label">Cache Hits (Portkey)</div>
                 <div class="metric-value val-total" id="metric-cache">0</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Semantic Hits</div>
+                <div class="metric-value val-total" id="metric-sem-cache">0</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Router Health</div>
+                <div class="metric-value val-allowed" id="metric-circuit" style="font-size:16px;">CLOSED &bull; OK</div>
             </div>
             <div class="metric-card">
                 <div class="metric-label">Cost Saved ($)</div>
@@ -582,7 +598,17 @@ DASHBOARD_HTML = """
                     setText("metric-pending", stats.pending_tool_approvals || 0);
                     setText("metric-latency", (stats.avg_latency_ms || 0) + " ms");
                     setText("metric-cache", `${stats.cache_hits || 0} (${stats.hit_ratio_pct || 0}%)`);
-                    setText("metric-savings", `$${(stats.estimated_usd_saved || 0).toFixed(3)}`);
+                    const semHits = stats.semantic_cache ? (stats.semantic_cache.semantic_hits || 0) : 0;
+                    const semRatio = stats.semantic_cache ? (stats.semantic_cache.hit_ratio_pct || 0) : 0;
+                    setText("metric-sem-cache", `${semHits} (${semRatio}%)`);
+                    
+                    const totalSavings = (stats.estimated_usd_saved || 0) + (stats.semantic_cache ? (stats.semantic_cache.estimated_usd_saved || 0) : 0);
+                    setText("metric-savings", `$${totalSavings.toFixed(3)}`);
+
+                    if (stats.fallback_router && stats.fallback_router.circuits) {
+                        const states = Object.entries(stats.fallback_router.circuits).map(([k, v]) => `${k}:${v}`).join(" | ");
+                        setText("metric-circuit", states);
+                    }
                 }
 
                 // Fetch audit logs

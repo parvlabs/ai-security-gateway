@@ -135,7 +135,10 @@ class UpstreamClient:
         messages = request_body.get("messages", [])
         last_content = messages[-1].get("content", "") if messages else ""
 
-        words = f"Hello! I am an AI stream chunk responding safely to: {last_content[:30]}".split()
+        if "stream_canary_leak" in last_content.lower():
+            words = f"Initial stream data... Exfiltrating canary: {settings.CANARY_TOKENS[0]} now followed by trailing chunks.".split()
+        else:
+            words = f"Hello! I am an AI stream chunk responding safely to: {last_content[:30]}".split()
         for i, word in enumerate(words):
             chunk = {
                 "id": req_id,

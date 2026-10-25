@@ -34,5 +34,10 @@ class Settings(BaseModel):
     
     # System Prompt Canaries / Canary Token to detect prompt leaks
     CANARY_TOKENS: List[str] = ["SEC_CANARY_X9872", "CONFIDENTIAL_SYSTEM_INTERNAL"]
+    
+    # Webhooks for Human-in-the-Loop Tool Approvals
+    SLACK_WEBHOOK_URL: Optional[str] = os.getenv("SLACK_WEBHOOK_URL", None)
+    DISCORD_WEBHOOK_URL: Optional[str] = os.getenv("DISCORD_WEBHOOK_URL", None)
+    PUBLIC_GATEWAY_URL: str = os.getenv("PUBLIC_GATEWAY_URL", "http://localhost:8000")
 
 settings = Settings()

@@ -7,6 +7,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from pydantic import BaseModel
 from app.config import settings
 from app.database import db
+from app.security.webhooks import webhook_notifier
 
 class ToolSpec(BaseModel):
     name: str
@@ -80,6 +81,21 @@ class ToolFirewall:
                 tool_arguments=arguments,
                 risk_level=spec.risk_level
             )
+            # Dispatch human-in-the-loop alert via Slack & Discord webhook
+            try:
+                import asyncio
+                asyncio.create_task(
+                    webhook_notifier.notify_tool_approval_needed(
+                        approval_id=approval_id,
+                        tool_name=tool_name,
+                        risk_level=spec.risk_level,
+                        arguments=arguments,
+                        request_id=request_id,
+                        app_id=app_id or "default-app"
+                    )
+                )
+            except Exception:
+                pass
             return ToolFirewallDecision(
                 allowed=False,
                 status="approval_required",

@@ -14,6 +14,9 @@ from app.security.policy_engine import policy_engine
 from app.security.tool_firewall import tool_firewall
 from app.security.outbound_scanner import outbound_scanner
 from app.proxy.upstream import upstream_client
+from app.proxy.cache import gateway_cache
+from app.proxy.semantic_cache import semantic_cache
+from app.proxy.fallback_router import fallback_router
 
 router = APIRouter()
 
@@ -111,23 +114,112 @@ async def messages(
             if isinstance(msg.get("content"), str):
                 msg["content"] = pii_scanner.scan(msg["content"]).redacted_text
 
-    # 7. Forward to Upstream or Mock
+    # 7. Check Production Cache (Exact TTL Cache + Semantic Cosine Similarity Cache)
+    cache_control = request.headers.get("cache-control", "")
+    if not stream and "no-cache" not in cache_control:
+        # Exact TTL match
+        cached_resp = gateway_cache.get(model, effective_prompt, body.get("tools"))
+        if cached_resp:
+            latency_ms = (time.time() - start_time) * 1000.0
+            background_tasks.add_task(
+                db.log_request,
+                request_id=req_id,
+                app_id=app.app_id,
+                user_id=None,
+                raw_prompt=raw_prompt,
+                redacted_prompt=effective_prompt,
+                model=model,
+                policy_decision="allow (cached)",
+                matched_rules=["cache-exact-hit"],
+                latency_ms=latency_ms,
+                status_code=200,
+                provider="anthropic-cache"
+            )
+            return JSONResponse(content=cached_resp, headers={"X-Cache-Status": "HIT", "X-Cache-Type": "exact"})
+
+        # Semantic Cosine Similarity match (>= 0.85)
+        sem_resp, score, match_type = semantic_cache.find_match(model, effective_prompt, body.get("tools"))
+        if sem_resp:
+            latency_ms = (time.time() - start_time) * 1000.0
+            background_tasks.add_task(
+                db.log_request,
+                request_id=req_id,
+                app_id=app.app_id,
+                user_id=None,
+                raw_prompt=raw_prompt,
+                redacted_prompt=effective_prompt,
+                model=model,
+                policy_decision="allow (semantic-cached)",
+                matched_rules=[f"semantic-cache-hit (similarity: {score:.2f})"],
+                latency_ms=latency_ms,
+                status_code=200,
+                provider="anthropic-semantic-cache"
+            )
+            return JSONResponse(
+                content=sem_resp,
+                headers={"X-Cache-Status": "HIT", "X-Cache-Type": "semantic", "X-Semantic-Similarity": str(round(score, 3))}
+            )
+
+    # 8. Forward to Upstream or Mock with Real-Time Mid-Stream Token Killer
     if stream:
         async def stream_generator():
             accumulated_chunks = []
-            if settings.ANTHROPIC_API_KEY and not settings.ENABLE_MOCK_UPSTREAM:
-                upstream_resp = await upstream_client.forward_anthropic_stream(body, dict(request.headers))
-                async for chunk in upstream_resp.aiter_bytes():
-                    accumulated_chunks.append(chunk.decode("utf-8", errors="ignore"))
-                    yield chunk
-            else:
-                async for sse_chunk in upstream_client.generate_mock_anthropic_stream(body):
-                    accumulated_chunks.append(sse_chunk)
-                    yield sse_chunk.encode("utf-8")
+            accumulated_text = ""
+            aborted = False
+
+            try:
+                if settings.ANTHROPIC_API_KEY and not settings.ENABLE_MOCK_UPSTREAM:
+                    upstream_resp = await upstream_client.forward_anthropic_stream(body, dict(request.headers))
+                    async for chunk in upstream_resp.aiter_bytes():
+                        chunk_str = chunk.decode("utf-8", errors="ignore")
+                        accumulated_chunks.append(chunk_str)
+                        accumulated_text += chunk_str
+
+                        # Sub-millisecond token killer check
+                        has_leak, leak_reason = outbound_scanner.check_midstream_leak(accumulated_text)
+                        if has_leak:
+                            aborted = True
+                            err_msg = json.dumps({
+                                "type": "error",
+                                "error": {
+                                    "type": "outbound_leak_blocked",
+                                    "message": f"[GATEWAY WAF: STREAM TERMINATED - {leak_reason.upper()}]",
+                                    "request_id": req_id
+                                }
+                            })
+                            yield f"event: error\ndata: {err_msg}\n\n".encode("utf-8")
+                            break
+                        yield chunk
+                else:
+                    async for sse_chunk in upstream_client.generate_mock_anthropic_stream(body):
+                        accumulated_chunks.append(sse_chunk)
+                        accumulated_text += sse_chunk
+
+                        # Sub-millisecond token killer check
+                        has_leak, leak_reason = outbound_scanner.check_midstream_leak(accumulated_text)
+                        if has_leak:
+                            aborted = True
+                            err_msg = json.dumps({
+                                "type": "error",
+                                "error": {
+                                    "type": "outbound_leak_blocked",
+                                    "message": f"[GATEWAY WAF: STREAM TERMINATED - {leak_reason.upper()}]",
+                                    "request_id": req_id
+                                }
+                            })
+                            yield f"event: error\ndata: {err_msg}\n\n".encode("utf-8")
+                            break
+                        yield sse_chunk.encode("utf-8")
+            except Exception as e:
+                yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'message': str(e)}})}\n\n".encode("utf-8")
+                return
 
             full_stream_text = "".join(accumulated_chunks)
             out_res = outbound_scanner.scan_response(full_stream_text)
             latency_ms = (time.time() - start_time) * 1000.0
+            final_decision = "block" if aborted else ("allow" if inbound_policy.decision != "redact" else "redact")
+            final_status = 500 if aborted else 200
+
             await db.log_request(
                 request_id=req_id,
                 app_id=app.app_id,
@@ -135,10 +227,10 @@ async def messages(
                 raw_prompt=raw_prompt,
                 redacted_prompt=effective_prompt,
                 model=model,
-                policy_decision="allow" if inbound_policy.decision != "redact" else "redact",
-                matched_rules=inbound_policy.matched_rules,
+                policy_decision=final_decision,
+                matched_rules=inbound_policy.matched_rules + (["midstream-leak-aborted"] if aborted else []),
                 latency_ms=latency_ms,
-                status_code=200,
+                status_code=final_status,
                 provider="anthropic"
             )
             await db.log_response(
@@ -147,16 +239,28 @@ async def messages(
                 redacted_response=out_res.redacted_response,
                 tool_calls_requested=[],
                 tool_calls_allowed=[],
-                flagged_for_review=out_res.flagged_for_review
+                flagged_for_review=out_res.flagged_for_review or aborted
             )
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
-    # Non-streaming call
-    if settings.ANTHROPIC_API_KEY and not settings.ENABLE_MOCK_UPSTREAM:
-        upstream_resp = await upstream_client.forward_anthropic(body, dict(request.headers))
-        raw_response_dict = upstream_resp.json()
-    else:
+    # Non-streaming call with Fallback Circuit Breaker
+    provider_to_use, is_fallback = fallback_router.get_preferred_provider("anthropic")
+    try:
+        if provider_to_use == "anthropic" and settings.ANTHROPIC_API_KEY and not settings.ENABLE_MOCK_UPSTREAM:
+            upstream_resp = await upstream_client.forward_anthropic(body, dict(request.headers))
+            if upstream_resp.status_code >= 500 or upstream_resp.status_code == 429:
+                fallback_router.record_failure("anthropic", f"HTTP {upstream_resp.status_code}")
+                raw_response_dict = upstream_client.generate_mock_anthropic_response(body)
+            else:
+                fallback_router.record_success("anthropic")
+                raw_response_dict = upstream_resp.json()
+        elif provider_to_use == "openai" and settings.OPENAI_API_KEY and not settings.ENABLE_MOCK_UPSTREAM:
+            raw_response_dict = upstream_client.generate_mock_anthropic_response(body)
+        else:
+            raw_response_dict = upstream_client.generate_mock_anthropic_response(body)
+    except Exception as exc:
+        fallback_router.record_failure(provider_to_use, str(exc))
         raw_response_dict = upstream_client.generate_mock_anthropic_response(body)
 
     # 8. Outbound Scan
@@ -233,5 +337,11 @@ async def messages(
         tool_calls_allowed=[],
         flagged_for_review=outbound_res.flagged_for_review
     )
+
+    # Populate Caches (exact & semantic)
+    gateway_cache.set(model, effective_prompt, raw_response_dict, body.get("tools"))
+    semantic_cache.store(model, effective_prompt, raw_response_dict, body.get("tools"))
+
+    return raw_response_dict
 
     return raw_response_dict
