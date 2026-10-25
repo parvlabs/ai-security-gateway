@@ -48,6 +48,7 @@ app.include_router(anthropic_router, tags=["Anthropic Compatible Proxy"])
 # Serve Web Dashboard
 @app.get("/", response_class=HTMLResponse, tags=["Dashboard"])
 @app.get("/dashboard", response_class=HTMLResponse, tags=["Dashboard"])
+@app.get("/index.html", response_class=HTMLResponse, tags=["Dashboard"])
 async def dashboard():
     return HTMLResponse(content=DASHBOARD_HTML)
 
